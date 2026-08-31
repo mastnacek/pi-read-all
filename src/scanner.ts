@@ -71,8 +71,14 @@ const IGNORE_DIRECTORIES = new Set([
 	"obj",
 	".idea",
 	".vscode",
+]);
+
+const IGNORE_FILES = new Set([
 	".DS_Store",
 	"Thumbs.db",
+	"npm-debug.log",
+	"yarn-debug.log",
+	"yarn-error.log",
 ]);
 
 export interface FileItem {
@@ -207,6 +213,10 @@ export async function scanPath(
 			}
 
 			if (entry.isFile() || entry.isSymbolicLink()) {
+				if (IGNORE_FILES.has(entry.name)) {
+					continue;
+				}
+
 				if (result.files.length >= maxFiles) {
 					result.truncated = true;
 					break;
@@ -292,7 +302,9 @@ export function formatScanResult(
 	const body = result.files
 		.map((f) => {
 			const tokAttr =
-				typeof f.tokens === "number" && f.tokens > 0 ? ` tokens="~${f.tokens}"` : "";
+				typeof f.tokens === "number" && f.tokens > 0
+					? ` tokens="~${f.tokens}"`
+					: "";
 			return `<file path="${f.relativePath}" lines="${f.lines}" size="${formatBytes(f.bytes)}"${tokAttr}>\n${f.content}\n</file>`;
 		})
 		.join("\n\n");

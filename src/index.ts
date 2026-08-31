@@ -6,17 +6,20 @@ import type {
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { createReadAllAutocompleteProvider } from "./autocomplete.js";
-import { formatBytes, formatScanResult, scanPath, type ScanResult } from "./scanner.js";
 import {
-	analyzeScanResults,
-	formatConfirmationPrompt,
-} from "./tokens.js";
+	formatBytes,
+	formatScanResult,
+	scanPath,
+	type ScanResult,
+} from "./scanner.js";
+import { analyzeScanResults, formatConfirmationPrompt } from "./tokens.js";
 
 /** Regex to match `@!"quoted path"` or `@!unquoted_path` */
 const AT_EXCL_RE = /@!"([^"\n]+)"|@!([^\s"(){}[\];,]+)/g;
 
 const COMMAND_DOCS = {
-	"<path>": "Load file or directory recursively into context with token analysis & confirmation",
+	"<path>":
+		"Load file or directory recursively into context with token analysis & confirmation",
 	status: "Display read-all extension status and statistics",
 	help: "Display usage and syntax reference banner",
 } as const;
@@ -147,10 +150,7 @@ export default function (pi: ExtensionAPI): void {
 				entry.scanResult,
 				entry.targetPath,
 			);
-			newText = newText.replace(
-				entry.fullMatch,
-				`\n\n${formattedContent}\n\n`,
-			);
+			newText = newText.replace(entry.fullMatch, `\n\n${formattedContent}\n\n`);
 		}
 
 		sessionStats.totalLoads += validScanEntries.length;
