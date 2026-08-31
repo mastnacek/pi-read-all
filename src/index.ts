@@ -21,10 +21,10 @@ import { analyzeScanResults, formatConfirmationPrompt } from "./tokens.js";
 const AT_EXCL_RE = /@!"([^"\n]+)"|@!([^\s"(){}[\];,]+)/g;
 
 const COMMAND_DOCS = {
-	"<path>":
-		"Load file or directory recursively into context with token analysis & confirmation",
-	status: "Display read-all extension status and statistics",
-	help: "Display usage and syntax reference banner",
+	"<cesta>":
+		"Načíst soubor nebo složku rekurzivně do kontextu s analýzou tokenů a potvrzením",
+	status: "Zobrazit statistiky načítání a stav doplňování",
+	help: "Zobrazit podrobnou nápovědu a syntaxi v češtině",
 } as const;
 
 interface SessionStats {
@@ -270,14 +270,35 @@ export default function (pi: ExtensionAPI): void {
 
 	// 4. Slash command: /read-all
 	pi.registerCommand("read-all", {
-		description: "Load complete file or directory contents into context",
+		description: "Načíst úplný obsah souboru nebo složky do kontextu",
 		getArgumentCompletions: async (
 			prefix: string,
 		): Promise<AutocompleteItem[] | null> => {
 			const tokens = prefix.split(/\s+/).filter(Boolean);
-			const typed = (tokens[0] ?? "").toLowerCase();
+			const trailingSpace = /\s$/.test(prefix);
 
-			// Subcommands: status, help
+			// 2nd-level argument completion:
+			if (tokens.length > 1 || (trailingSpace && tokens.length === 1)) {
+				const cmd = tokens[0]?.toLowerCase();
+				if (
+					cmd === "status" ||
+					cmd === "help" ||
+					cmd === "-h" ||
+					cmd === "--help"
+				) {
+					return null;
+				}
+				return getPathSuggestions(
+					prefix.trimStart(),
+					process.cwd(),
+					false,
+					new AbortController().signal,
+					"plain",
+				);
+			}
+
+			// 1st-level subcommand & path suggestions
+			const typed = (tokens[0] ?? "").toLowerCase();
 			const subcommands: AutocompleteItem[] = Object.entries(COMMAND_DOCS).flatMap(
 				([key, description]) =>
 					!key.startsWith("<") && key.toLowerCase().startsWith(typed)
@@ -309,23 +330,23 @@ export default function (pi: ExtensionAPI): void {
 				subcommand === "--help"
 			) {
 				const helpText = [
-					"# pi-read-all — Full Context Loader",
-					"Recursively load complete files or directories into LLM context with token analysis and user confirmation.",
+					"# pi-read-all — Načtení plného kontextu",
+					"Rekurzivní načtení celých souborů nebo složek do kontextu LLM s analýzou tokenů a interaktivním potvrzením.",
 					"",
-					"### Usage & Syntax:",
-					"  @!path/to/file       — Include single complete file (e.g. @!book.txt)",
-					"  @!path/to/folder/    — Recursively include whole folder (e.g. @!src/core/)",
-					'  @!"path with spaces" — Include paths with spaces',
-					"  @!                   — Prompt for interactive path selection in TUI",
+					"### Použití a syntaxe:",
+					"  @!cesta/k/souboru    — Vložit jeden kompletní soubor (např. @!kniha.txt)",
+					"  @!cesta/ke/slozce/   — Rekurzivně vložit celou složku (např. @!src/core/)",
+					'  @!"cesta s mezerou"  — Vložit cestu obsahující mezery',
+					"  @!                   — Otevřít interaktivní našeptávač cest v TUI",
 					"",
-					"### Confirmation & Safety:",
-					"  Before injecting large content, token count and context impact are calculated",
-					"  and an interactive confirmation dialog is displayed.",
+					"### Bezpečnost a kontrola:",
+					"  Před vložením velkého obsahu se spočítá počet tokenů a dopad na kontextové okno",
+					"  a zobrazí se dialog pro potvrzení.",
 					"",
-					"### Slash Commands:",
-					"  /read-all <path>     — Load path, inspect tokens, confirm, and inject",
-					"  /read-all status     — Show session load metrics (loads, files, tokens, bytes)",
-					"  /read-all help       — Display this help reference",
+					"### Příkazy:",
+					"  /read-all <cesta>    — Načíst cestu, spočítat tokeny, potvrdit a vložit",
+					"  /read-all status     — Zobrazit statistiky načítání sezení (soubory, tokeny, data)",
+					"  /read-all help       — Zobrazit tuto nápovědu",
 				].join("\n");
 
 				ctx.ui.notify(helpText, "info");
@@ -334,13 +355,13 @@ export default function (pi: ExtensionAPI): void {
 
 			if (subcommand === "status") {
 				const statusMsg = [
-					`Total Loads: ${sessionStats.totalLoads}`,
-					`Files Processed: ${sessionStats.totalFilesLoaded}`,
-					`Total Tokens: ~${sessionStats.totalTokensLoaded.toLocaleString()}`,
-					`Total Content: ${formatBytes(sessionStats.totalBytesLoaded)}`,
+					`Celkem načtení: ${sessionStats.totalLoads}`,
+					`Zpracováno souborů: ${sessionStats.totalFilesLoaded}`,
+					`Celkem tokenů: ~${sessionStats.totalTokensLoaded.toLocaleString()}`,
+					`Celkový objem: ${formatBytes(sessionStats.totalBytesLoaded)}`,
 				].join(" | ");
 
-				ctx.ui.notify(`[pi-read-all Status] ${statusMsg}`, "info");
+				ctx.ui.notify(`[pi-read-all Stav] ${statusMsg}`, "info");
 				return;
 			}
 
@@ -359,7 +380,7 @@ export default function (pi: ExtensionAPI): void {
 
 					if (!confirmed) {
 						ctx.ui.notify(
-							`[pi-read-all] Load cancelled by user (~${analysis.totalTokens.toLocaleString()} tokens rejected).`,
+							`[pi-read-all] Načtení zrušeno uživatelem (~${analysis.totalTokens.toLocaleString()} tokenů odmítnuto).`,
 							"warning",
 						);
 						return;

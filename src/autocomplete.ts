@@ -173,13 +173,13 @@ export async function getPathSuggestions(
 			completionValue = rawCandidate;
 		}
 
-		let description = isDir ? "📁 directory (recursive)" : "📄 file";
+		let description = isDir ? "📁 složka (rekurzivně)" : "📄 soubor";
 
 		if (!isDir && !isBinary(entry.name)) {
 			try {
 				const fullPath = join(searchDir, entry.name);
 				const st = await stat(fullPath);
-				description = `📄 file (${formatBytes(st.size)})`;
+				description = `📄 soubor (${formatBytes(st.size)})`;
 			} catch {
 				// ignore stat errors
 			}
