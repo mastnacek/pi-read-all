@@ -45,5 +45,8 @@
   "devDependencies": {
     "@types/node": "^26.4.0",
     "typescript": "^5.8.0"
+  },
+  "dependencies": {
+    "js-tiktoken": "^1.0.21"
   }
 }

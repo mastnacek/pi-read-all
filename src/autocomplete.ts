@@ -1,4 +1,7 @@
-import type { AutocompleteItem, AutocompleteProvider } from "@earendil-works/pi-tui";
+import type {
+	AutocompleteItem,
+	AutocompleteProvider,
+} from "@earendil-works/pi-tui";
 import { readdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { formatBytes, isBinary } from "./scanner.js";
@@ -49,14 +52,20 @@ export function createReadAllAutocompleteProvider(
 			const match = quotedMatch || normalMatch;
 
 			if (!match) {
-				return currentProvider?.getSuggestions(lines, cursorLine, cursorCol, options) ?? null;
+				return (
+					currentProvider?.getSuggestions(lines, cursorLine, cursorCol, options) ??
+					null
+				);
 			}
 
 			const typed = match[1] ?? "";
 			const items = await getPathSuggestions(typed, cwd, isQuoted, options.signal);
 
 			if (items.length === 0) {
-				return currentProvider?.getSuggestions(lines, cursorLine, cursorCol, options) ?? null;
+				return (
+					currentProvider?.getSuggestions(lines, cursorLine, cursorCol, options) ??
+					null
+				);
 			}
 
 			const matchedPrefix = isQuoted ? `@!"${typed}` : `@!${typed}`;
@@ -69,7 +78,13 @@ export function createReadAllAutocompleteProvider(
 
 		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
 			if (currentProvider?.applyCompletion) {
-				return currentProvider.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+				return currentProvider.applyCompletion(
+					lines,
+					cursorLine,
+					cursorCol,
+					item,
+					prefix,
+				);
 			}
 
 			const line = lines[cursorLine] ?? "";
@@ -90,8 +105,11 @@ export function createReadAllAutocompleteProvider(
 
 		shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
 			return (
-				currentProvider?.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ??
-				true
+				currentProvider?.shouldTriggerFileCompletion?.(
+					lines,
+					cursorLine,
+					cursorCol,
+				) ?? true
 			);
 		},
 	};

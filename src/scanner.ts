@@ -1,15 +1,57 @@
-import { Buffer } from "node:buffer";
+import type { Buffer } from "node:buffer";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 const BINARY_EXTENSIONS = new Set([
-	".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".bmp", ".tiff", ".svgz",
-	".pdf", ".zip", ".gz", ".tar", ".7z", ".rar", ".bz2", ".xz",
-	".exe", ".dll", ".dylib", ".so", ".bin", ".iso", ".wasm", ".pyc", ".class",
-	".db", ".sqlite", ".sqlite3",
-	".woff", ".woff2", ".ttf", ".otf", ".eot",
-	".mp3", ".mp4", ".wav", ".mov", ".avi", ".mkv", ".flac", ".ogg", ".webm",
-	".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp",
+	".png",
+	".jpg",
+	".jpeg",
+	".gif",
+	".webp",
+	".ico",
+	".bmp",
+	".tiff",
+	".svgz",
+	".pdf",
+	".zip",
+	".gz",
+	".tar",
+	".7z",
+	".rar",
+	".bz2",
+	".xz",
+	".exe",
+	".dll",
+	".dylib",
+	".so",
+	".bin",
+	".iso",
+	".wasm",
+	".pyc",
+	".class",
+	".db",
+	".sqlite",
+	".sqlite3",
+	".woff",
+	".woff2",
+	".ttf",
+	".otf",
+	".eot",
+	".mp3",
+	".mp4",
+	".wav",
+	".mov",
+	".avi",
+	".mkv",
+	".flac",
+	".ogg",
+	".webm",
+	".docx",
+	".xlsx",
+	".pptx",
+	".odt",
+	".ods",
+	".odp",
 ]);
 
 const IGNORE_DIRECTORIES = new Set([
@@ -39,6 +81,8 @@ export interface FileItem {
 	content: string;
 	lines: number;
 	bytes: number;
+	chars?: number;
+	tokens?: number;
 }
 
 export interface ScanOptions {
@@ -54,6 +98,8 @@ export interface ScanResult {
 	files: FileItem[];
 	totalLines: number;
 	totalBytes: number;
+	totalChars?: number;
+	totalTokens?: number;
 	skippedBinaryCount: number;
 	skippedOversizeCount: number;
 	truncated: boolean;
@@ -86,7 +132,10 @@ export async function scanPath(
 	const maxFiles = options.maxFiles ?? 2000;
 	const maxTotalBytes = options.maxTotalBytes ?? 50 * 1024 * 1024; // 50MB
 	const includeHidden = options.includeHidden ?? false;
-	const ignoreDirs = new Set([...IGNORE_DIRECTORIES, ...(options.customIgnoreDirs ?? [])]);
+	const ignoreDirs = new Set([
+		...IGNORE_DIRECTORIES,
+		...(options.customIgnoreDirs ?? []),
+	]);
 
 	const absolutePath = isAbsolute(rawPath) ? rawPath : resolve(cwd, rawPath);
 	const targetStat = await stat(absolutePath);
@@ -141,7 +190,12 @@ export async function scanPath(
 		for (const entry of entries) {
 			const fullEntryPath = join(currentDir, entry.name);
 
-			if (!includeHidden && entry.name.startsWith(".") && entry.name !== "." && entry.name !== "..") {
+			if (
+				!includeHidden &&
+				entry.name.startsWith(".") &&
+				entry.name !== "." &&
+				entry.name !== ".."
+			) {
 				continue;
 			}
 
@@ -206,7 +260,10 @@ export async function scanPath(
 	return result;
 }
 
-export function formatScanResult(result: ScanResult, rawTarget: string): string {
+export function formatScanResult(
+	result: ScanResult,
+	rawTarget: string,
+): string {
 	if (result.files.length === 0) {
 		if (result.skippedBinaryCount > 0) {
 			return `[pi-read-all]: No text content found in "${rawTarget}" (${result.skippedBinaryCount} binary file(s) skipped).`;
@@ -214,9 +271,14 @@ export function formatScanResult(result: ScanResult, rawTarget: string): string 
 		return `[pi-read-all]: No files found in "${rawTarget}".`;
 	}
 
+	const tokenPart =
+		typeof result.totalTokens === "number" && result.totalTokens > 0
+			? `~${result.totalTokens.toLocaleString()} tokens, `
+			: "";
+
 	const headerParts = [
 		`[pi-read-all]: Loaded ${result.files.length} file${result.files.length === 1 ? "" : "s"} from "${rawTarget}"`,
-		`Total: ${result.totalLines.toLocaleString()} lines, ${formatBytes(result.totalBytes)}`,
+		`Total: ${tokenPart}${result.totalLines.toLocaleString()} lines, ${formatBytes(result.totalBytes)}`,
 	];
 
 	if (result.skippedBinaryCount > 0) {
@@ -228,10 +290,11 @@ export function formatScanResult(result: ScanResult, rawTarget: string): string 
 
 	const header = headerParts.join(" | ");
 	const body = result.files
-		.map(
-			(f) =>
-				`<file path="${f.relativePath}" lines="${f.lines}" size="${formatBytes(f.bytes)}">\n${f.content}\n</file>`,
-		)
+		.map((f) => {
+			const tokAttr =
+				typeof f.tokens === "number" && f.tokens > 0 ? ` tokens="~${f.tokens}"` : "";
+			return `<file path="${f.relativePath}" lines="${f.lines}" size="${formatBytes(f.bytes)}"${tokAttr}>\n${f.content}\n</file>`;
+		})
 		.join("\n\n");
 
 	return `${header}\n\n${body}`;
