@@ -1,0 +1,49 @@
+{
+  "name": "pi-read-all",
+  "version": "0.1.0",
+  "description": "Pi coding agent extension to recursively load entire files or directories into context with @! trigger and no truncation.",
+  "type": "module",
+  "license": "MIT",
+  "author": "mastnacek",
+  "homepage": "https://github.com/mastnacek/pi-read-all#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mastnacek/pi-read-all.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mastnacek/pi-read-all/issues"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "pi-extension",
+    "read-all",
+    "whole-file",
+    "context"
+  ],
+  "files": [
+    "src",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "scripts": {
+    "check": "tsc --noEmit"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "typebox": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.0",
+    "typescript": "^5.8.0"
+  }
+}
