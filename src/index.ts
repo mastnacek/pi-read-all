@@ -135,8 +135,9 @@ export default function (pi: ExtensionAPI): void {
 			const confirmed = await ctx.ui.confirm(title, message);
 
 			if (!confirmed) {
+				ctx.ui.setEditorText?.(text);
 				ctx.ui.notify(
-					`[pi-read-all] Load cancelled by user (~${analysis.totalTokens.toLocaleString()} tokens rejected). Prompt was not sent.`,
+					`[pi-read-all] Load cancelled by user (~${analysis.totalTokens.toLocaleString()} tokens rejected). Prompt preserved in editor.`,
 					"warning",
 				);
 				return { action: "handled" };

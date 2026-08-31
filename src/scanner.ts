@@ -81,6 +81,18 @@ const IGNORE_FILES = new Set([
 	"yarn-error.log",
 ]);
 
+const LOCK_FILES = new Set([
+	"package-lock.json",
+	"pnpm-lock.yaml",
+	"yarn.lock",
+	"Cargo.lock",
+	"poetry.lock",
+	"composer.lock",
+	"Pipfile.lock",
+	"bun.lockb",
+	"flake.lock",
+]);
+
 export interface FileItem {
 	path: string;
 	relativePath: string;
@@ -95,6 +107,7 @@ export interface ScanOptions {
 	maxFiles?: number;
 	maxTotalBytes?: number;
 	includeHidden?: boolean;
+	includeLockfiles?: boolean;
 	customIgnoreDirs?: string[];
 }
 
@@ -214,6 +227,10 @@ export async function scanPath(
 
 			if (entry.isFile() || entry.isSymbolicLink()) {
 				if (IGNORE_FILES.has(entry.name)) {
+					continue;
+				}
+
+				if (!options.includeLockfiles && LOCK_FILES.has(entry.name)) {
 					continue;
 				}
 
