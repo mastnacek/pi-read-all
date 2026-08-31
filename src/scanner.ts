@@ -1,6 +1,7 @@
 import type { Buffer } from "node:buffer";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import ignore, { type Ignore } from "ignore";
 
 const BINARY_EXTENSIONS = new Set([
 	".png",
@@ -28,7 +29,11 @@ const BINARY_EXTENSIONS = new Set([
 	".iso",
 	".wasm",
 	".pyc",
+	".pyo",
 	".class",
+	".jar",
+	".war",
+	".ear",
 	".db",
 	".sqlite",
 	".sqlite3",
@@ -54,34 +59,125 @@ const BINARY_EXTENSIONS = new Set([
 	".odp",
 ]);
 
-const IGNORE_DIRECTORIES = new Set([
+/**
+ * Universal default ignore directories across all major programming ecosystems:
+ * Python, Node/TS, Rust, Go, Java/Kotlin, C/C++, .NET/C#, PHP, Ruby, Dart/Flutter, Elixir, Swift.
+ */
+export const DEFAULT_IGNORE_DIRECTORIES = new Set([
+	// Version Control
 	".git",
-	"node_modules",
 	".svn",
 	".hg",
+	".cvs",
+
+	// Python Virtual Environments & Caches
+	".venv",
+	"venv",
+	"env",
+	".env",
+	"ENV",
+	"env.bak",
+	"venv.bak",
+	"__pycache__",
+	".pytest_cache",
+	".mypy_cache",
+	".ruff_cache",
+	".tox",
+	".nox",
+	".hypothesis",
+	".poetry",
+	".pdm-build",
+	".pdm-home",
+	".pixi",
+	".conda",
+	"htmlcov",
+	".coverage",
+
+	// Node / JavaScript / TypeScript / Web Bundlers
+	"node_modules",
+	"jspm_packages",
+	"web_modules",
 	".next",
-	".turbo",
 	".nuxt",
+	".turbo",
+	".svelte-kit",
+	".astro",
+	".docusaurus",
+	".parcel-cache",
 	".cache",
+	".output",
 	"dist",
 	"build",
 	"out",
+
+	// Rust / Cargo
 	"target",
-	"bin",
+
+	// Go
+	"vendor",
+	"pkg",
+
+	// Java / Kotlin / JVM (Maven, Gradle, SBT)
+	".gradle",
+	".m2",
+	".bloop",
+	".metals",
+	".sbt",
+
+	// C / C++ / Build Generators
+	"CMakeFiles",
+	"CMakeScripts",
+	".cmake",
+	"Debug",
+	"Release",
+	"x64",
+	"x86",
 	"obj",
+	"bin",
+
+	// .NET / C# / F#
+	"packages",
+	"TestResults",
+	"BenchmarkDotNet.Artifacts",
+
+	// PHP (Composer)
+	".phpunit.cache",
+	".php-cs-fixer.cache",
+
+	// Ruby (Bundler)
+	".bundle",
+
+	// Dart / Flutter
+	".dart_tool",
+	".pub-cache",
+	".pub",
+
+	// Elixir / Erlang
+	"_build",
+	"deps",
+	".elixir_ls",
+
+	// Swift / Xcode
+	".build",
+	".swiftpm",
+	"DerivedData",
+	"Pods",
+	"Carthage",
+
+	// IDEs & Editor metadata
 	".idea",
 	".vscode",
+	".fleet",
+	".history",
+	".vs",
+	".clangd",
+	".settings",
 ]);
 
-const IGNORE_FILES = new Set([
-	".DS_Store",
-	"Thumbs.db",
-	"npm-debug.log",
-	"yarn-debug.log",
-	"yarn-error.log",
-]);
-
-const LOCK_FILES = new Set([
+/**
+ * Common generated lockfiles (skipped in directory tree scans by default).
+ */
+export const LOCK_FILES = new Set([
 	"package-lock.json",
 	"pnpm-lock.yaml",
 	"yarn.lock",
@@ -91,6 +187,47 @@ const LOCK_FILES = new Set([
 	"Pipfile.lock",
 	"bun.lockb",
 	"flake.lock",
+	"mix.lock",
+	"pubspec.lock",
+]);
+
+/**
+ * Sensitive credential files excluded by default from bulk directory scans.
+ */
+export const SENSITIVE_FILES = new Set([
+	".env",
+	".env.local",
+	".env.production",
+	".env.development",
+	".env.staging",
+	".env.test",
+	"credentials.json",
+	"service-account.json",
+	"auth.json",
+	"id_rsa",
+	"id_ed25519",
+	"id_ecdsa",
+	"id_dsa",
+]);
+
+const SENSITIVE_EXTENSIONS = new Set([
+	".pem",
+	".key",
+	".pkcs12",
+	".pfx",
+	".p12",
+	".keystore",
+	".jks",
+]);
+
+const IGNORE_FILES = new Set([
+	".DS_Store",
+	"Thumbs.db",
+	"desktop.ini",
+	"npm-debug.log",
+	"yarn-debug.log",
+	"yarn-error.log",
+	"pnpm-debug.log",
 ]);
 
 export interface FileItem {
@@ -108,7 +245,10 @@ export interface ScanOptions {
 	maxTotalBytes?: number;
 	includeHidden?: boolean;
 	includeLockfiles?: boolean;
+	includeSensitive?: boolean;
+	useGitIgnore?: boolean;
 	customIgnoreDirs?: string[];
+	customIgnoreFiles?: string[];
 }
 
 export interface ScanResult {
@@ -120,6 +260,7 @@ export interface ScanResult {
 	totalChars?: number;
 	totalTokens?: number;
 	skippedBinaryCount: number;
+	skippedSensitiveCount: number;
 	skippedOversizeCount: number;
 	truncated: boolean;
 }
@@ -143,6 +284,42 @@ export function isBinary(filePath: string, buffer?: Buffer): boolean {
 	return false;
 }
 
+export function isSensitiveFile(filename: string): boolean {
+	if (SENSITIVE_FILES.has(filename)) return true;
+	const ext = filename.slice(filename.lastIndexOf(".")).toLowerCase();
+	return SENSITIVE_EXTENSIONS.has(ext);
+}
+
+/**
+ * Load and combine .gitignore rules from workspace cwd and target directory.
+ */
+async function loadGitIgnore(cwd: string, targetPath: string): Promise<Ignore | null> {
+	const ig = ignore();
+	let loaded = false;
+
+	// 1. Try cwd .gitignore
+	try {
+		const cwdGitignore = await readFile(join(cwd, ".gitignore"), "utf-8");
+		ig.add(cwdGitignore);
+		loaded = true;
+	} catch {
+		// ignore
+	}
+
+	// 2. Try targetPath .gitignore if different
+	if (targetPath !== cwd) {
+		try {
+			const targetGitignore = await readFile(join(targetPath, ".gitignore"), "utf-8");
+			ig.add(targetGitignore);
+			loaded = true;
+		} catch {
+			// ignore
+		}
+	}
+
+	return loaded ? ig : null;
+}
+
 export async function scanPath(
 	rawPath: string,
 	cwd: string,
@@ -151,8 +328,10 @@ export async function scanPath(
 	const maxFiles = options.maxFiles ?? 2000;
 	const maxTotalBytes = options.maxTotalBytes ?? 50 * 1024 * 1024; // 50MB
 	const includeHidden = options.includeHidden ?? false;
+	const useGitIgnore = options.useGitIgnore ?? true;
+
 	const ignoreDirs = new Set([
-		...IGNORE_DIRECTORIES,
+		...DEFAULT_IGNORE_DIRECTORIES,
 		...(options.customIgnoreDirs ?? []),
 	]);
 
@@ -166,12 +345,13 @@ export async function scanPath(
 		totalLines: 0,
 		totalBytes: 0,
 		skippedBinaryCount: 0,
+		skippedSensitiveCount: 0,
 		skippedOversizeCount: 0,
 		truncated: false,
 	};
 
 	if (!targetStat.isDirectory()) {
-		// Single file
+		// Single file target — allow direct read even for lockfiles or sensitive files
 		const buffer = await readFile(absolutePath);
 		if (isBinary(absolutePath, buffer)) {
 			result.skippedBinaryCount++;
@@ -194,6 +374,9 @@ export async function scanPath(
 		return result;
 	}
 
+	// Load gitignore rules if active
+	const gitIgnore = useGitIgnore ? await loadGitIgnore(cwd, absolutePath) : null;
+
 	// Recursive directory scan
 	const stack: string[] = [absolutePath];
 
@@ -208,20 +391,31 @@ export async function scanPath(
 
 		for (const entry of entries) {
 			const fullEntryPath = join(currentDir, entry.name);
+			const relFromCwd = relative(cwd, fullEntryPath).split(sep).join("/");
+			const relFromTarget = relative(absolutePath, fullEntryPath).split(sep).join("/");
 
 			if (
 				!includeHidden &&
 				entry.name.startsWith(".") &&
 				entry.name !== "." &&
-				entry.name !== ".."
+				entry.name !== ".." &&
+				!entry.name.startsWith(".venv") // explicit in ignoreDirs
 			) {
 				continue;
 			}
 
 			if (entry.isDirectory()) {
-				if (!ignoreDirs.has(entry.name)) {
-					stack.push(fullEntryPath);
+				if (ignoreDirs.has(entry.name) || ignoreDirs.has(`.${entry.name}`)) {
+					continue;
 				}
+
+				if (gitIgnore) {
+					if (gitIgnore.ignores(`${relFromCwd}/`) || gitIgnore.ignores(`${relFromTarget}/`)) {
+						continue;
+					}
+				}
+
+				stack.push(fullEntryPath);
 				continue;
 			}
 
@@ -232,6 +426,17 @@ export async function scanPath(
 
 				if (!options.includeLockfiles && LOCK_FILES.has(entry.name)) {
 					continue;
+				}
+
+				if (!options.includeSensitive && isSensitiveFile(entry.name)) {
+					result.skippedSensitiveCount++;
+					continue;
+				}
+
+				if (gitIgnore) {
+					if (gitIgnore.ignores(relFromCwd) || gitIgnore.ignores(relFromTarget)) {
+						continue;
+					}
 				}
 
 				if (result.files.length >= maxFiles) {
@@ -260,7 +465,7 @@ export async function scanPath(
 					const content = buffer.toString("utf-8");
 					const lines = content.length === 0 ? 0 : content.split("\n").length;
 					const bytes = buffer.length;
-					const relPath = relative(cwd, fullEntryPath).split(sep).join("/");
+					const relPath = relFromCwd;
 
 					result.files.push({
 						path: fullEntryPath,
@@ -310,6 +515,9 @@ export function formatScanResult(
 
 	if (result.skippedBinaryCount > 0) {
 		headerParts.push(`Skipped ${result.skippedBinaryCount} binary files`);
+	}
+	if (result.skippedSensitiveCount > 0) {
+		headerParts.push(`Skipped ${result.skippedSensitiveCount} sensitive files`);
 	}
 	if (result.truncated) {
 		headerParts.push("Reached scan safety limit");

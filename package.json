@@ -47,6 +47,7 @@
     "typescript": "^5.8.0"
   },
   "dependencies": {
+    "ignore": "^7.0.7",
     "js-tiktoken": "^1.0.21"
   }
 }

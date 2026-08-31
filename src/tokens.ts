@@ -2,7 +2,12 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getEncoding, type Tiktoken } from "js-tiktoken";
 import type { ScanResult } from "./scanner.js";
 
-type SupportedEncoding = "o200k_base" | "cl100k_base" | "p50k_base" | "r50k_base" | "gpt2";
+type SupportedEncoding =
+	| "o200k_base"
+	| "cl100k_base"
+	| "p50k_base"
+	| "r50k_base"
+	| "gpt2";
 
 const encodersCache = new Map<SupportedEncoding, Tiktoken>();
 
@@ -60,7 +65,8 @@ export interface ResolvedTokenizer {
 export function resolveTokenizerForModel(
 	model?: string | { id?: string; name?: string; provider?: string },
 ): ResolvedTokenizer {
-	const rawName = typeof model === "string" ? model : (model?.name ?? model?.id ?? "");
+	const rawName =
+		typeof model === "string" ? model : (model?.name ?? model?.id ?? "");
 	const rawProvider = typeof model === "object" ? (model?.provider ?? "") : "";
 	const normalized = `${rawProvider} ${rawName}`.toLowerCase();
 
@@ -82,14 +88,23 @@ export function resolveTokenizerForModel(
 	}
 
 	// 2. Legacy models
-	if (normalized.includes("davinci-003") || normalized.includes("davinci-002") || normalized.includes("code-davinci")) {
+	if (
+		normalized.includes("davinci-003") ||
+		normalized.includes("davinci-002") ||
+		normalized.includes("code-davinci")
+	) {
 		return {
 			encoding: "p50k_base",
 			family: "p50k (Legacy OpenAI)",
 			label: "p50k",
 		};
 	}
-	if (normalized.includes("davinci") || normalized.includes("curie") || normalized.includes("babbage") || normalized.includes("ada")) {
+	if (
+		normalized.includes("davinci") ||
+		normalized.includes("curie") ||
+		normalized.includes("babbage") ||
+		normalized.includes("ada")
+	) {
 		return {
 			encoding: "r50k_base",
 			family: "r50k (Legacy GPT-3)",
@@ -108,7 +123,9 @@ export function resolveTokenizerForModel(
 /**
  * Get or lazily initialize the requested Tiktoken encoder singleton.
  */
-function getTokenizer(encoding: SupportedEncoding = "cl100k_base"): Tiktoken | null {
+function getTokenizer(
+	encoding: SupportedEncoding = "cl100k_base",
+): Tiktoken | null {
 	const cached = encodersCache.get(encoding);
 	if (cached) return cached;
 	try {
@@ -146,7 +163,7 @@ export function estimateUniversalTokensHeuristic(text: string): number {
 			(cp >= 0x3400 && cp <= 0x4dbf) || // CJK Extension A
 			(cp >= 0x3040 && cp <= 0x309f) || // Hiragana
 			(cp >= 0x30a0 && cp <= 0x30ff) || // Katakana
-			(cp >= 0xac00 && cp <= 0xd7af)    // Hangul Syllables
+			(cp >= 0xac00 && cp <= 0xd7af) // Hangul Syllables
 		) {
 			cjkChars++;
 		} else {
@@ -174,7 +191,8 @@ export function countTokens(
 ): number {
 	if (!text) return 0;
 	const resolved = resolveTokenizerForModel(model);
-	const tokenizer = getTokenizer(resolved.encoding) ?? getTokenizer("cl100k_base");
+	const tokenizer =
+		getTokenizer(resolved.encoding) ?? getTokenizer("cl100k_base");
 
 	if (tokenizer) {
 		try {

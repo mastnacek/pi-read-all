@@ -4,29 +4,9 @@ import type {
 } from "@earendil-works/pi-tui";
 import { readdir, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { formatBytes, isBinary } from "./scanner.js";
+import { DEFAULT_IGNORE_DIRECTORIES, formatBytes, isBinary } from "./scanner.js";
 
 const MAX_SUGGESTIONS = 30;
-
-const IGNORE_DIRS = new Set([
-	".git",
-	"node_modules",
-	".svn",
-	".hg",
-	".next",
-	".turbo",
-	".nuxt",
-	".cache",
-	"dist",
-	"build",
-	"out",
-	"target",
-	"bin",
-	"obj",
-	".idea",
-	".vscode",
-	".DS_Store",
-]);
 
 /**
  * Regex matching `@!path` or `@!"quoted path"` immediately before cursor.
@@ -157,7 +137,10 @@ async function getPathSuggestions(
 			continue;
 		}
 
-		if (IGNORE_DIRS.has(entry.name)) {
+		if (
+			DEFAULT_IGNORE_DIRECTORIES.has(entry.name) ||
+			DEFAULT_IGNORE_DIRECTORIES.has(`.${entry.name}`)
+		) {
 			continue;
 		}
 
