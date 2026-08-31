@@ -1,6 +1,6 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getEncoding, type Tiktoken } from "js-tiktoken";
-import type { FileItem, ScanResult } from "./scanner.js";
+import type { ScanResult } from "./scanner.js";
 
 let encoderInstance: Tiktoken | null = null;
 
@@ -18,9 +18,11 @@ export const uiTheme = {
 	cyanGlow: "\x1b[1;38;2;0;245;255m",
 	cyan: "\x1b[38;2;0;210;235m",
 	magentaGlow: "\x1b[1;38;2;255;55;180m",
+	magenta: "\x1b[38;2;235;45;165m",
 	purpleGlow: "\x1b[1;38;2;185;105;255m",
 	purple: "\x1b[38;2;160;90;235m",
 	blueGlow: "\x1b[1;38;2;70;180;255m",
+	blue: "\x1b[38;2;50;150;240m",
 	greenGlow: "\x1b[1;38;2;50;255;120m",
 	green: "\x1b[38;2;45;210;110m",
 	yellowGlow: "\x1b[1;38;2;255;215;40m",
@@ -30,7 +32,7 @@ export const uiTheme = {
 	whiteBold: "\x1b[1;38;2;255;255;255m",
 	white: "\x1b[38;2;240;245;250m",
 	gray: "\x1b[38;2;130;145;160m",
-	darkGray: "\x1b[38;2;75;85;100m",
+	darkGray: "\x1b[38;2;70;80;95m",
 	divider: "\x1b[38;2;90;105;125m",
 	subtle: "\x1b[38;2;100;115;135m",
 } as const;
@@ -250,41 +252,103 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Render an ANSI gradient progress bar gauge.
+ * Render a dual-segment ANSI progress bar gauge:
+ * - Active session tokens in Blue/Cyan glow (█)
+ * - Incoming context payload tokens in Magenta/Orange/Red glow (█)
+ * - Empty context headroom in Dark Slate (░)
  */
-export function renderProgressBar(percent: number, width = 16): string {
-	const clamped = Math.max(0, Math.min(100, percent));
-	const filled = Math.round((clamped / 100) * width);
-	const empty = width - filled;
-	const barColor =
-		clamped > 80
-			? uiTheme.redGlow
-			: clamped > 50
-				? uiTheme.yellowGlow
-				: uiTheme.greenGlow;
+export function renderDualProgressBar(
+	currentTokens: number,
+	incomingTokens: number,
+	contextWindow: number,
+	width = 24,
+): string {
+	if (!contextWindow || contextWindow <= 0) return "";
+	const currentRatio = Math.min(1, Math.max(0, currentTokens / contextWindow));
+	const incomingRatio = Math.min(
+		1 - currentRatio,
+		Math.max(0, incomingTokens / contextWindow),
+	);
+	const totalRatio = Math.min(
+		1,
+		(currentTokens + incomingTokens) / contextWindow,
+	);
 
-	return `${uiTheme.gray}[${barColor}${"█".repeat(filled)}${uiTheme.darkGray}${"░".repeat(empty)}${uiTheme.gray}] ${uiTheme.whiteBold}${clamped.toFixed(1)}%${uiTheme.reset}`;
+	let currentBlocks = Math.round(currentRatio * width);
+	let incomingBlocks = Math.round(incomingRatio * width);
+
+	if (incomingTokens > 0 && incomingBlocks === 0 && currentBlocks < width) {
+		incomingBlocks = 1;
+	}
+	if (currentTokens > 0 && currentBlocks === 0 && incomingBlocks < width) {
+		currentBlocks = 1;
+	}
+
+	if (currentBlocks + incomingBlocks > width) {
+		if (currentBlocks > incomingBlocks) {
+			currentBlocks = width - incomingBlocks;
+		} else {
+			incomingBlocks = width - currentBlocks;
+		}
+	}
+
+	const emptyBlocks = Math.max(0, width - currentBlocks - incomingBlocks);
+	const totalPercent = (totalRatio * 100).toFixed(1);
+
+	const incomingColor =
+		totalRatio > 0.85
+			? uiTheme.redGlow
+			: totalRatio > 0.6
+				? uiTheme.orangeGlow
+				: uiTheme.magentaGlow;
+
+	return `${uiTheme.gray}[${uiTheme.blueGlow}${"█".repeat(currentBlocks)}${incomingColor}${"█".repeat(incomingBlocks)}${uiTheme.darkGray}${"░".repeat(emptyBlocks)}${uiTheme.gray}] ${uiTheme.whiteBold}${totalPercent}%${uiTheme.reset}`;
 }
 
 /**
- * Format a rich, colorful, styled token summary report with emojis, glow accents, and progress indicators.
+ * Format a rich, colorful, styled token summary report with emojis, dual progress bar, glow accents, and breakdown.
  */
 export function formatDetailedTokenReport(analysis: TokenAnalysis): string {
 	const c = uiTheme;
 	const lines: string[] = [];
 
 	// 1. Source Header
-	lines.push(`📦 ${c.magentaGlow}Source:${c.reset} ${c.whiteBold}${analysis.targetDescription}${c.reset}`);
+	lines.push(
+		`📦 ${c.magentaGlow}Source:${c.reset} ${c.whiteBold}${analysis.targetDescription}${c.reset}`,
+	);
 
-	// 2. Metrics Pill Bar
+	// 2. FIRST PLACE: Dual-Segment Progress Bar (Active Session vs Incoming Context vs Headroom)
+	const ci = analysis.contextImpact;
+	if (ci && typeof ci.contextWindow === "number" && ci.contextWindow > 0) {
+		const win = ci.contextWindow;
+		const current = ci.currentSessionTokens ?? 0;
+		const incoming = analysis.totalTokens;
+		const currentPct = ((current / win) * 100).toFixed(1);
+		const incomingPct = ((incoming / win) * 100).toFixed(1);
+		const headroom = Math.max(0, win - (current + incoming));
+		const headColor = headroom < 10000 ? c.redGlow : c.greenGlow;
+		const modelLabel = ci.activeModel ? `${ci.activeModel} · ` : "";
+
+		lines.push(
+			`🔋 ${c.white}Capacity:${c.reset} ${renderDualProgressBar(current, incoming, win, 24)} ${c.gray}(${modelLabel}${formatNumber(win)} max)${c.reset}`,
+		);
+		lines.push(
+			`   ${c.blueGlow}■${c.reset} ${c.white}Active Session:${c.reset} ${c.blueGlow}${formatNumber(current)}${c.reset} ${c.gray}(${currentPct}%)${c.reset}  ${c.divider}│${c.reset}  ${c.magentaGlow}■${c.reset} ${c.white}Incoming Context:${c.reset} ${c.magentaGlow}+${formatNumber(incoming)}${c.reset} ${c.gray}(${incomingPct}%)${c.reset}  ${c.divider}│${c.reset}  ✨ ${c.white}Headroom:${c.reset} ${headColor}~${formatNumber(headroom)}${c.reset}`,
+		);
+		lines.push("");
+	}
+
+	// 3. Metrics Pill Bar
 	const tokenPill = `🔤 ${c.cyanGlow}~${formatNumber(analysis.totalTokens)} tokens${c.reset}`;
 	const filesPill = `📁 ${c.blueGlow}${analysis.totalFiles} files${c.reset}`;
 	const linesPill = `📄 ${c.greenGlow}${formatNumber(analysis.totalLines)} lines${c.reset}`;
 	const sizePill = `💾 ${c.yellowGlow}${analysis.formattedBytes}${c.reset} ${c.gray}(${formatNumber(analysis.totalChars)} chars)${c.reset}`;
 
-	lines.push(`${tokenPill}  ${c.divider}│${c.reset}  ${filesPill}  ${c.divider}│${c.reset}  ${linesPill}  ${c.divider}│${c.reset}  ${sizePill}`);
+	lines.push(
+		`${tokenPill}  ${c.divider}│${c.reset}  ${filesPill}  ${c.divider}│${c.reset}  ${linesPill}  ${c.divider}│${c.reset}  ${sizePill}`,
+	);
 
-	// 3. Model Context Window Impact
+	// 4. Detailed Model Context Window Impact
 	if (analysis.contextImpact) {
 		const ci = analysis.contextImpact;
 		lines.push("");
@@ -296,7 +360,9 @@ export function formatDetailedTokenReport(analysis: TokenAnalysis): string {
 			const winStr = ci.contextWindow
 				? ` ${c.gray}(max: ${c.whiteBold}${formatNumber(ci.contextWindow)}${c.gray} tokens)${c.reset}`
 				: "";
-			lines.push(`• 🤖 ${c.white}Active Model:${c.reset} ${c.cyanGlow}${ci.activeModel}${c.reset}${winStr}`);
+			lines.push(
+				`• 🤖 ${c.white}Active Model:${c.reset} ${c.cyanGlow}${ci.activeModel}${c.reset}${winStr}`,
+			);
 		}
 
 		if (typeof ci.payloadSharePercent === "number") {
@@ -307,7 +373,7 @@ export function formatDetailedTokenReport(analysis: TokenAnalysis): string {
 						? c.yellowGlow
 						: c.greenGlow;
 			lines.push(
-				`• 📊 ${c.white}Payload Share:${c.reset} ${shareColor}~${ci.payloadSharePercent}%${c.reset} ${c.gray}of total context window${c.reset}`,
+				`• 📊 ${c.white}Payload Share:${c.reset} ${shareColor}~${ci.payloadSharePercent}%${c.reset} ${c.gray}of context window${c.reset}`,
 			);
 		}
 
@@ -326,13 +392,11 @@ export function formatDetailedTokenReport(analysis: TokenAnalysis): string {
 			lines.push(
 				`• 📈 ${c.white}Session Usage:${c.reset} ${c.cyan}${formatNumber(ci.currentSessionTokens)}${c.gray} tokens${c.reset} → ${c.white}New Total:${c.reset} ${projColor}~${formatNumber(ci.projectedTotalTokens)} tokens${c.reset} ${c.gray}(${ci.projectedPercent}%)${c.reset}`,
 			);
-			lines.push(`• 🔋 ${c.white}Capacity Gauge:${c.reset} ${renderProgressBar(ci.projectedPercent)}`);
-		} else if (typeof ci.payloadSharePercent === "number") {
-			lines.push(`• 🔋 ${c.white}Capacity Gauge:${c.reset} ${renderProgressBar(ci.payloadSharePercent)}`);
 		}
 
 		if (typeof ci.remainingHeadroom === "number") {
-			const headColor = ci.remainingHeadroom < 10000 ? c.redGlow : c.greenGlow;
+			const headColor =
+				ci.remainingHeadroom < 10000 ? c.redGlow : c.greenGlow;
 			lines.push(
 				`• ✨ ${c.white}Remaining Headroom:${c.reset} ${headColor}~${formatNumber(ci.remainingHeadroom)} tokens${c.reset}`,
 			);
@@ -349,7 +413,7 @@ export function formatDetailedTokenReport(analysis: TokenAnalysis): string {
 		}
 	}
 
-	// 4. Top Files Breakdown
+	// 5. Top Files Breakdown
 	if (analysis.files.length > 1) {
 		lines.push("");
 		lines.push(
