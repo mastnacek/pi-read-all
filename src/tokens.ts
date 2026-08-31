@@ -144,14 +144,13 @@ function getTokenizer(
 export function estimateUniversalTokensHeuristic(text: string): number {
 	if (!text) return 0;
 	let tokenEstimate = 0;
-	const len = text.length;
 
 	let asciiChars = 0;
 	let cjkChars = 0;
 	let whitespaceChars = 0;
 
-	for (let i = 0; i < len; i++) {
-		const cp = text.codePointAt(i) ?? 0;
+	for (const char of text) {
+		const cp = char.codePointAt(0) ?? 0;
 		if (cp <= 0x7f) {
 			if (cp === 0x20 || cp === 0x09 || cp === 0x0a || cp === 0x0d) {
 				whitespaceChars++;
@@ -314,7 +313,10 @@ export function analyzeScanResults(
 	if (ctx) {
 		const activeModel = ctx.model?.name || ctx.model?.id;
 		const contextWindow = ctx.model?.contextWindow;
-		const usage = ctx.getContextUsage();
+		const usage =
+			typeof ctx.getContextUsage === "function"
+				? ctx.getContextUsage()
+				: undefined;
 		const currentSessionTokens =
 			typeof usage?.tokens === "number" ? usage.tokens : undefined;
 
@@ -375,6 +377,36 @@ export function analyzeScanResults(
 	};
 }
 
+function getIncomingGaugeColor(totalRatio: number): string {
+	if (totalRatio > 0.85) return uiTheme.redGlow;
+	if (totalRatio > 0.6) return uiTheme.orangeGlow;
+	return uiTheme.magentaGlow;
+}
+
+function getShareColor(percent: number): string {
+	if (percent > 50) return uiTheme.orangeGlow;
+	if (percent > 20) return uiTheme.yellowGlow;
+	return uiTheme.greenGlow;
+}
+
+function getProjectedUsageColor(percent: number): string {
+	if (percent > 80) return uiTheme.redGlow;
+	if (percent > 50) return uiTheme.yellowGlow;
+	return uiTheme.greenGlow;
+}
+
+function getTokenWeightColor(sharePercent: number): string {
+	if (sharePercent >= 50) return uiTheme.orangeGlow;
+	if (sharePercent >= 10) return uiTheme.yellowGlow;
+	return uiTheme.cyanGlow;
+}
+
+function getFileShareTextColor(sharePercent: number): string {
+	if (sharePercent >= 50) return uiTheme.orangeGlow;
+	if (sharePercent >= 10) return uiTheme.yellow;
+	return uiTheme.gray;
+}
+
 export function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -424,13 +456,7 @@ export function renderDualProgressBar(
 
 	const emptyBlocks = Math.max(0, width - currentBlocks - incomingBlocks);
 	const totalPercent = (totalRatio * 100).toFixed(1);
-
-	const incomingColor =
-		totalRatio > 0.85
-			? uiTheme.redGlow
-			: totalRatio > 0.6
-				? uiTheme.orangeGlow
-				: uiTheme.magentaGlow;
+	const incomingColor = getIncomingGaugeColor(totalRatio);
 
 	return `${uiTheme.gray}[${uiTheme.blueGlow}${"█".repeat(currentBlocks)}${incomingColor}${"█".repeat(incomingBlocks)}${uiTheme.darkGray}${"░".repeat(emptyBlocks)}${uiTheme.gray}] ${uiTheme.whiteBold}${totalPercent}%${uiTheme.reset}`;
 }
@@ -497,12 +523,7 @@ export function formatDetailedTokenReport(analysis: TokenAnalysis): string {
 		}
 
 		if (typeof ci.payloadSharePercent === "number") {
-			const shareColor =
-				ci.payloadSharePercent > 50
-					? c.orangeGlow
-					: ci.payloadSharePercent > 20
-						? c.yellowGlow
-						: c.greenGlow;
+			const shareColor = getShareColor(ci.payloadSharePercent);
 			lines.push(
 				`• 📊 ${c.white}Payload Share:${c.reset} ${shareColor}~${ci.payloadSharePercent}%${c.reset} ${c.gray}of context window${c.reset}`,
 			);
@@ -513,12 +534,7 @@ export function formatDetailedTokenReport(analysis: TokenAnalysis): string {
 			typeof ci.projectedTotalTokens === "number" &&
 			typeof ci.projectedPercent === "number"
 		) {
-			const projColor =
-				ci.projectedPercent > 80
-					? c.redGlow
-					: ci.projectedPercent > 50
-						? c.yellowGlow
-						: c.greenGlow;
+			const projColor = getProjectedUsageColor(ci.projectedPercent);
 
 			lines.push(
 				`• 📈 ${c.white}Session Usage:${c.reset} ${c.cyan}${formatNumber(ci.currentSessionTokens)}${c.gray} tokens${c.reset} → ${c.white}New Total:${c.reset} ${projColor}~${formatNumber(ci.projectedTotalTokens)} tokens${c.reset} ${c.gray}(${ci.projectedPercent}%)${c.reset}`,
@@ -553,21 +569,11 @@ export function formatDetailedTokenReport(analysis: TokenAnalysis): string {
 		const displayFiles = analysis.files.slice(0, maxDisplay);
 
 		for (let i = 0; i < displayFiles.length; i++) {
-			const f = displayFiles[i]!;
+			const f = displayFiles[i];
+			if (!f) continue;
 			const num = String(i + 1).padStart(2, " ");
-			const tokColor =
-				f.sharePercent >= 50
-					? c.orangeGlow
-					: f.sharePercent >= 10
-						? c.yellowGlow
-						: c.cyanGlow;
-
-			const shareColor =
-				f.sharePercent >= 50
-					? c.orangeGlow
-					: f.sharePercent >= 10
-						? c.yellow
-						: c.gray;
+			const tokColor = getTokenWeightColor(f.sharePercent);
+			const shareColor = getFileShareTextColor(f.sharePercent);
 
 			lines.push(
 				`  ${c.gray}${num}.${c.reset} 📄 ${c.white}${f.relativePath}${c.reset} ${c.divider}──${c.reset} ${tokColor}~${formatNumber(f.tokens)} tok${c.reset} ${shareColor}(${f.sharePercent}%)${c.reset} ${c.divider}│${c.reset} ${c.green}${formatNumber(f.lines)} lines${c.reset} ${c.divider}│${c.reset} ${c.yellow}${formatBytes(f.bytes)}${c.reset}`,

@@ -1,5 +1,6 @@
 import type { Buffer } from "node:buffer";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import ignore, { type Ignore } from "ignore";
 
@@ -261,8 +262,23 @@ export interface ScanResult {
 	totalTokens?: number;
 	skippedBinaryCount: number;
 	skippedSensitiveCount: number;
+	skippedUnreadableCount: number;
 	skippedOversizeCount: number;
 	truncated: boolean;
+}
+
+/**
+ * Expand tilde (~) and resolve relative/absolute paths across operating systems.
+ */
+export function expandPath(rawPath: string, cwd: string): string {
+	const trimmed = rawPath.trim();
+	if (trimmed === "~") {
+		return homedir();
+	}
+	if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+		return join(homedir(), trimmed.slice(2));
+	}
+	return isAbsolute(trimmed) ? trimmed : resolve(cwd, trimmed);
 }
 
 export function formatBytes(bytes: number): string {
@@ -293,7 +309,10 @@ export function isSensitiveFile(filename: string): boolean {
 /**
  * Load and combine .gitignore rules from workspace cwd and target directory.
  */
-async function loadGitIgnore(cwd: string, targetPath: string): Promise<Ignore | null> {
+async function loadGitIgnore(
+	cwd: string,
+	targetPath: string,
+): Promise<Ignore | null> {
 	const ig = ignore();
 	let loaded = false;
 
@@ -309,7 +328,10 @@ async function loadGitIgnore(cwd: string, targetPath: string): Promise<Ignore | 
 	// 2. Try targetPath .gitignore if different
 	if (targetPath !== cwd) {
 		try {
-			const targetGitignore = await readFile(join(targetPath, ".gitignore"), "utf-8");
+			const targetGitignore = await readFile(
+				join(targetPath, ".gitignore"),
+				"utf-8",
+			);
 			ig.add(targetGitignore);
 			loaded = true;
 		} catch {
@@ -335,7 +357,7 @@ export async function scanPath(
 		...(options.customIgnoreDirs ?? []),
 	]);
 
-	const absolutePath = isAbsolute(rawPath) ? rawPath : resolve(cwd, rawPath);
+	const absolutePath = expandPath(rawPath, cwd);
 	const targetStat = await stat(absolutePath);
 
 	const result: ScanResult = {
@@ -346,6 +368,7 @@ export async function scanPath(
 		totalBytes: 0,
 		skippedBinaryCount: 0,
 		skippedSensitiveCount: 0,
+		skippedUnreadableCount: 0,
 		skippedOversizeCount: 0,
 		truncated: false,
 	};
@@ -377,6 +400,15 @@ export async function scanPath(
 	// Load gitignore rules if active
 	const gitIgnore = useGitIgnore ? await loadGitIgnore(cwd, absolutePath) : null;
 
+	// Track visited real directory paths to prevent circular symlinks / infinite loops
+	const visitedDirs = new Set<string>();
+	try {
+		const realRoot = await realpath(absolutePath);
+		visitedDirs.add(realRoot);
+	} catch {
+		visitedDirs.add(absolutePath);
+	}
+
 	// Recursive directory scan
 	const stack: string[] = [absolutePath];
 
@@ -392,7 +424,15 @@ export async function scanPath(
 		for (const entry of entries) {
 			const fullEntryPath = join(currentDir, entry.name);
 			const relFromCwd = relative(cwd, fullEntryPath).split(sep).join("/");
-			const relFromTarget = relative(absolutePath, fullEntryPath).split(sep).join("/");
+			const relFromTarget = relative(absolutePath, fullEntryPath)
+				.split(sep)
+				.join("/");
+
+			// Sensitive file check first so that .env, credentials, keys are counted & excluded
+			if (!options.includeSensitive && isSensitiveFile(entry.name)) {
+				result.skippedSensitiveCount++;
+				continue;
+			}
 
 			if (
 				!includeHidden &&
@@ -404,16 +444,44 @@ export async function scanPath(
 				continue;
 			}
 
-			if (entry.isDirectory()) {
+			let isDir = entry.isDirectory();
+			if (!isDir && entry.isSymbolicLink()) {
+				try {
+					const linkStat = await stat(fullEntryPath);
+					if (linkStat.isDirectory()) {
+						isDir = true;
+					}
+				} catch {
+					// Broken symlink or inaccessible target
+					continue;
+				}
+			}
+
+			if (isDir) {
 				if (ignoreDirs.has(entry.name) || ignoreDirs.has(`.${entry.name}`)) {
 					continue;
 				}
 
 				if (gitIgnore) {
-					if (gitIgnore.ignores(`${relFromCwd}/`) || gitIgnore.ignores(`${relFromTarget}/`)) {
+					if (
+						gitIgnore.ignores(`${relFromCwd}/`) ||
+						gitIgnore.ignores(`${relFromTarget}/`)
+					) {
 						continue;
 					}
 				}
+
+				let realDirPath: string;
+				try {
+					realDirPath = await realpath(fullEntryPath);
+				} catch {
+					realDirPath = fullEntryPath;
+				}
+
+				if (visitedDirs.has(realDirPath)) {
+					continue;
+				}
+				visitedDirs.add(realDirPath);
 
 				stack.push(fullEntryPath);
 				continue;
@@ -425,11 +493,6 @@ export async function scanPath(
 				}
 
 				if (!options.includeLockfiles && LOCK_FILES.has(entry.name)) {
-					continue;
-				}
-
-				if (!options.includeSensitive && isSensitiveFile(entry.name)) {
-					result.skippedSensitiveCount++;
 					continue;
 				}
 
@@ -478,7 +541,7 @@ export async function scanPath(
 					result.totalLines += lines;
 					result.totalBytes += bytes;
 				} catch {
-					// skip unreadable files
+					result.skippedUnreadableCount++;
 				}
 			}
 		}
@@ -518,6 +581,9 @@ export function formatScanResult(
 	}
 	if (result.skippedSensitiveCount > 0) {
 		headerParts.push(`Skipped ${result.skippedSensitiveCount} sensitive files`);
+	}
+	if (result.skippedUnreadableCount > 0) {
+		headerParts.push(`Skipped ${result.skippedUnreadableCount} unreadable files`);
 	}
 	if (result.truncated) {
 		headerParts.push("Reached scan safety limit");

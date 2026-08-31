@@ -5,7 +5,10 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { createReadAllAutocompleteProvider } from "./autocomplete.js";
+import {
+	createReadAllAutocompleteProvider,
+	getPathSuggestions,
+} from "./autocomplete.js";
 import {
 	formatBytes,
 	formatScanResult,
@@ -91,28 +94,55 @@ export default function (pi: ExtensionAPI): void {
 			fullMatch: string;
 			targetPath: string;
 			scanResult: ScanResult;
+			index: number;
+			length: number;
 		}
 
 		const validScanEntries: ScanEntry[] = [];
 
 		for (const match of matches) {
 			const fullMatch = match[0];
-			const targetPath = match[1] ?? match[2];
+			let targetPath = match[1] ?? match[2];
+			const matchIndex = match.index ?? 0;
 			if (!targetPath) continue;
 
+			const isQuoted = Boolean(match[1]);
+			let scanResult: ScanResult | null = null;
+			let matchLength = fullMatch.length;
+
 			try {
-				const scanResult = await scanPath(targetPath, ctx.cwd);
+				scanResult = await scanPath(targetPath, ctx.cwd);
+			} catch (error: unknown) {
+				// If unquoted and failed, try stripping trailing sentence punctuation like . , ? ! : ;
+				if (!isQuoted && /[.,:;!?]+$/.test(targetPath)) {
+					const stripped = targetPath.replace(/[.,:;!?]+$/, "");
+					try {
+						scanResult = await scanPath(stripped, ctx.cwd);
+						const diff = targetPath.length - stripped.length;
+						targetPath = stripped;
+						matchLength -= diff;
+					} catch {
+						// Keep original error below
+					}
+				}
+
+				if (!scanResult) {
+					const msg = error instanceof Error ? error.message : String(error);
+					ctx.ui.notify(
+						`[pi-read-all] Could not read "${targetPath}": ${msg}`,
+						"error",
+					);
+				}
+			}
+
+			if (scanResult) {
 				validScanEntries.push({
 					fullMatch,
 					targetPath,
 					scanResult,
+					index: matchIndex,
+					length: matchLength,
 				});
-			} catch (error: unknown) {
-				const msg = error instanceof Error ? error.message : String(error);
-				ctx.ui.notify(
-					`[pi-read-all] Could not read "${targetPath}": ${msg}`,
-					"error",
-				);
 			}
 		}
 
@@ -144,14 +174,19 @@ export default function (pi: ExtensionAPI): void {
 			}
 		}
 
-		// 3. If confirmed, perform the prompt injection
+		// 3. If confirmed, perform the prompt injection from end to start using exact character offsets
+		const sortedEntries = [...validScanEntries].sort((a, b) => b.index - a.index);
 		let newText = text;
-		for (const entry of validScanEntries) {
+		for (const entry of sortedEntries) {
 			const formattedContent = formatScanResult(
 				entry.scanResult,
 				entry.targetPath,
 			);
-			newText = newText.replace(entry.fullMatch, `\n\n${formattedContent}\n\n`);
+			const replacement = `\n\n${formattedContent}\n\n`;
+			newText =
+				newText.slice(0, entry.index) +
+				replacement +
+				newText.slice(entry.index + entry.length);
 		}
 
 		sessionStats.totalLoads += validScanEntries.length;
@@ -242,18 +277,25 @@ export default function (pi: ExtensionAPI): void {
 			const tokens = prefix.split(/\s+/).filter(Boolean);
 			const typed = (tokens[0] ?? "").toLowerCase();
 
-			if (tokens.length <= 1 && !/\s$/.test(prefix)) {
-				const subcommands = Object.entries(COMMAND_DOCS).flatMap(
-					([key, description]) =>
-						key.toLowerCase().startsWith(typed)
-							? [{ value: key, label: key, description }]
-							: [],
-				);
+			// Subcommands: status, help
+			const subcommands: AutocompleteItem[] = Object.entries(COMMAND_DOCS).flatMap(
+				([key, description]) =>
+					!key.startsWith("<") && key.toLowerCase().startsWith(typed)
+						? [{ value: key, label: key, description }]
+						: [],
+			);
 
-				return subcommands.length > 0 ? subcommands : null;
-			}
+			// Path suggestions for /read-all <path>
+			const pathItems = await getPathSuggestions(
+				prefix.trimStart(),
+				process.cwd(),
+				false,
+				new AbortController().signal,
+				"plain",
+			);
 
-			return null;
+			const combined = [...subcommands, ...pathItems];
+			return combined.length > 0 ? combined : null;
 		},
 		handler: async (args: string, ctx: ExtensionCommandContext) => {
 			const trimmed = args.trim();

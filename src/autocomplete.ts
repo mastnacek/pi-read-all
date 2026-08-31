@@ -3,8 +3,13 @@ import type {
 	AutocompleteProvider,
 } from "@earendil-works/pi-tui";
 import { readdir, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
-import { DEFAULT_IGNORE_DIRECTORIES, formatBytes, isBinary } from "./scanner.js";
+import { dirname, join } from "node:path";
+import {
+	DEFAULT_IGNORE_DIRECTORIES,
+	expandPath,
+	formatBytes,
+	isBinary,
+} from "./scanner.js";
 
 const MAX_SUGGESTIONS = 30;
 
@@ -19,7 +24,7 @@ export function createReadAllAutocompleteProvider(
 	currentProvider?: AutocompleteProvider,
 ): AutocompleteProvider {
 	return {
-		triggerCharacters: ["!"],
+		triggerCharacters: ["!", "/"],
 
 		async getSuggestions(lines, cursorLine, cursorCol, options) {
 			const line = lines[cursorLine] ?? "";
@@ -57,7 +62,7 @@ export function createReadAllAutocompleteProvider(
 		},
 
 		applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
-			if (currentProvider?.applyCompletion) {
+			if (!item.value.startsWith("@!") && currentProvider?.applyCompletion) {
 				return currentProvider.applyCompletion(
 					lines,
 					cursorLine,
@@ -95,11 +100,12 @@ export function createReadAllAutocompleteProvider(
 	};
 }
 
-async function getPathSuggestions(
+export async function getPathSuggestions(
 	typed: string,
 	cwd: string,
 	wasQuoted: boolean,
 	signal: AbortSignal,
+	prefixMode: "@!" | "plain" = "@!",
 ): Promise<AutocompleteItem[]> {
 	const normalizedTyped = typed.replace(/\\/g, "/");
 	let targetDir: string;
@@ -118,7 +124,7 @@ async function getPathSuggestions(
 
 	let searchDir = cwd;
 	if (targetDir) {
-		searchDir = isAbsolute(targetDir) ? targetDir : resolve(cwd, targetDir);
+		searchDir = expandPath(targetDir, cwd);
 	}
 
 	let entries;
@@ -156,9 +162,15 @@ async function getPathSuggestions(
 
 		// Format completion value
 		const needsQuotes = wasQuoted || rawCandidate.includes(" ");
-		let completionValue = `@!${rawCandidate}`;
-		if (needsQuotes) {
-			completionValue = `@!"${rawCandidate}${isDir ? "" : '"'}`;
+		let completionValue: string;
+		if (prefixMode === "@!") {
+			completionValue = needsQuotes
+				? `@!"${rawCandidate}${isDir ? "" : '"'}`
+				: `@!${rawCandidate}`;
+		} else if (needsQuotes) {
+			completionValue = `"${rawCandidate}${isDir ? "" : '"'}`;
+		} else {
+			completionValue = rawCandidate;
 		}
 
 		let description = isDir ? "📁 directory (recursive)" : "📄 file";

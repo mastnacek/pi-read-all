@@ -29,7 +29,9 @@
     "package.json"
   ],
   "scripts": {
-    "check": "tsc --noEmit"
+    "build": "tsc",
+    "check": "tsc --noEmit",
+    "test": "tsc && node --test dist/test/**/*.test.js"
   },
   "pi": {
     "extensions": [
