@@ -170,9 +170,7 @@ export function analyzeScanResults(
 	// Calculate percentage shares
 	for (const f of allFiles) {
 		f.sharePercent =
-			totalTokens > 0
-				? Number(((f.tokens / totalTokens) * 100).toFixed(1))
-				: 0;
+			totalTokens > 0 ? Number(((f.tokens / totalTokens) * 100).toFixed(1)) : 0;
 	}
 
 	// Sort files by token count descending
@@ -204,13 +202,9 @@ export function analyzeScanResults(
 			const projectedPercent = Number(
 				((projectedTotalTokens / contextWindow) * 100).toFixed(1),
 			);
-			const remainingHeadroom = Math.max(
-				0,
-				contextWindow - projectedTotalTokens,
-			);
+			const remainingHeadroom = Math.max(0, contextWindow - projectedTotalTokens);
 			const isOverCapacity = projectedTotalTokens > contextWindow;
-			const isHighCapacityWarning =
-				projectedPercent >= 75 && !isOverCapacity;
+			const isHighCapacityWarning = projectedPercent >= 75 && !isOverCapacity;
 
 			contextImpact = {
 				activeModel,
@@ -395,8 +389,7 @@ export function formatDetailedTokenReport(analysis: TokenAnalysis): string {
 		}
 
 		if (typeof ci.remainingHeadroom === "number") {
-			const headColor =
-				ci.remainingHeadroom < 10000 ? c.redGlow : c.greenGlow;
+			const headColor = ci.remainingHeadroom < 10000 ? c.redGlow : c.greenGlow;
 			lines.push(
 				`• ✨ ${c.white}Remaining Headroom:${c.reset} ${headColor}~${formatNumber(ci.remainingHeadroom)} tokens${c.reset}`,
 			);
