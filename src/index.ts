@@ -58,6 +58,17 @@ export default function (pi: ExtensionAPI): void {
 		}
 	});
 
+	// Drop session-scoped counters on shutdown (AGENTS.md §5/§6); they are
+	// re-initialized on the next session_start.
+	pi.on("session_shutdown", () => {
+		sessionStats = {
+			totalLoads: 0,
+			totalFilesLoaded: 0,
+			totalBytesLoaded: 0,
+			totalTokensLoaded: 0,
+		};
+	});
+
 	// 2. Input interceptor: Transform @! triggers into full file/dir contents with token check & confirmation
 	pi.on("input", async (event, ctx: ExtensionContext) => {
 		if (event.source === "extension") {
