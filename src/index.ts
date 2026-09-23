@@ -275,15 +275,7 @@ export default function (pi: ExtensionAPI): void {
 				};
 			} catch (error: unknown) {
 				const msg = error instanceof Error ? error.message : String(error);
-				return {
-					content: [
-						{
-							type: "text",
-							text: `[pi-read-all] Error reading "${params.path}": ${msg}`,
-						},
-					],
-					details: { error: true },
-				};
+				throw new Error(`[pi-read-all] Error reading "${params.path}": ${msg}`);
 			}
 		},
 	});
