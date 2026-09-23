@@ -42,8 +42,16 @@ let sessionStats: SessionStats = {
 };
 
 export default function (pi: ExtensionAPI): void {
+	/** Unsubscribers from every `pi.on()`; drained on session_shutdown (AGENTS §5). */
+	const unsubscribers: Array<() => void> = [];
+
+	/** Retain a `pi.on()` return value; older engine typings declare it void. */
+	const track = (result: unknown): void => {
+		if (typeof result === "function") unsubscribers.push(result as () => void);
+	};
+
 	// 1. Session start: Register TUI autocomplete provider
-	pi.on("session_start", (_event, ctx: ExtensionContext) => {
+	track(pi.on("session_start", (_event, ctx: ExtensionContext) => {
 		sessionStats = {
 			totalLoads: 0,
 			totalFilesLoaded: 0,
@@ -56,11 +64,12 @@ export default function (pi: ExtensionAPI): void {
 				createReadAllAutocompleteProvider(ctx.cwd, current),
 			);
 		}
-	});
+	}));
 
 	// Drop session-scoped counters on shutdown (AGENTS.md §5/§6); they are
 	// re-initialized on the next session_start.
 	pi.on("session_shutdown", () => {
+		while (unsubscribers.length > 0) unsubscribers.pop()?.();
 		sessionStats = {
 			totalLoads: 0,
 			totalFilesLoaded: 0,
@@ -70,7 +79,7 @@ export default function (pi: ExtensionAPI): void {
 	});
 
 	// 2. Input interceptor: Transform @! triggers into full file/dir contents with token check & confirmation
-	pi.on("input", async (event, ctx: ExtensionContext) => {
+	track(pi.on("input", async (event, ctx: ExtensionContext) => {
 		if (event.source === "extension") {
 			return { action: "continue" };
 		}
@@ -213,7 +222,7 @@ export default function (pi: ExtensionAPI): void {
 		}
 
 		return { action: "transform", text: newText };
-	});
+	}));
 
 	// 3. Custom Tool for agent: read_all
 	pi.registerTool({
